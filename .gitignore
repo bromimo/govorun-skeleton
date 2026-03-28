@@ -5,3 +5,15 @@
 !/storage/logs/.gitkeep
 /storage/state/*.json
 !/storage/state/.gitkeep
+
+# Development tooling — not part of the skeleton template
+/.claude/
+/.idea/
+/.vscode/
+/.osp/
+/composer.phar
+/composer-setup.php
+/docs/superpowers/
+.worktrees/
+.DS_Store
+Thumbs.db
