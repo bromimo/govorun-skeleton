@@ -305,12 +305,14 @@ class RegistrationFlow extends Flow
             } else {
                 $this->reply('Регистрация отменена.');
             }
+            // nextStep() обязателен — завершает flow и очищает состояние
+            $this->nextStep();
         });
     }
 
     public function onComplete(): void
     {
-        // Вызывается после последнего шага
+        // Вызывается после nextStep() на последнем шаге
     }
 
     public function onCancel(): void
@@ -331,6 +333,8 @@ class StartController extends Controller
     }
 }
 ```
+
+**Важно:** `$this->nextStep()` обязателен в каждом `receive` callback. На последнем шаге он завершает flow и очищает состояние. Без него flow останется активным и будет перехватывать все последующие сообщения.
 
 ### Данные состояния (StateData)
 
