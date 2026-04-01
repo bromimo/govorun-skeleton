@@ -1,0 +1,5 @@
+/.claude/           export-ignore
+/.idea/             export-ignore
+/.osp/              export-ignore
+/docs/              export-ignore
+.gitattributes      export-ignore
