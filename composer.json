@@ -5,7 +5,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
-        "govorun/framework": "^1.0"
+        "govorun/framework": "^2.0"
     },
     "autoload": {
         "psr-4": {
