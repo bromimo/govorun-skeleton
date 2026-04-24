@@ -182,16 +182,21 @@ $user->raw;       // сырые данные
 ### Inline-клавиатура
 
 ```php
+use Govorun\Messaging\Button;
 use Govorun\Messaging\Keyboard;
 use Govorun\Messaging\Message;
 
 $msg = Message::make('Выберите действие:')
     ->keyboard(
-        Keyboard::make()
-            ->button('Да', action: 'confirm', param: ['id' => 1])
-            ->button('Нет', action: 'cancel')
-            ->row()
-            ->button('Ссылка', url: 'https://example.com')
+        Keyboard::make()->buttons([
+            [
+                Button::make('Да')->action('confirm', ['id' => 1]),
+                Button::make('Нет')->action('cancel'),
+            ],
+            [
+                Button::make('Ссылка')->url('https://example.com'),
+            ],
+        ])
     );
 
 $this->send($msg);
@@ -202,10 +207,10 @@ $this->send($msg);
 ```php
 $msg = Message::make('Поделитесь контактом:')
     ->keyboard(
-        Keyboard::reply()
-            ->button('Отправить контакт', requestContact: true)
-            ->row()
-            ->button('Отправить локацию', requestLocation: true)
+        Keyboard::reply()->buttons([
+            [Button::make('Отправить контакт')->requestContact()],
+            [Button::make('Отправить локацию')->requestLocation()],
+        ])
     );
 
 $this->send($msg);
@@ -276,10 +281,12 @@ class RegistrationFlow extends Flow
 
     public function phoneStep(Step $step): void
     {
-        $step->ask('Ваш номер телефона?', function () {
-            return Keyboard::reply()
-                ->button('Отправить контакт', requestContact: true);
-        });
+        $step->ask(
+            'Ваш номер телефона?',
+            Keyboard::reply()->buttons([
+                [Button::make('Отправить контакт')->requestContact()],
+            ]),
+        );
 
         $step->receive(function (IncomingMessage $msg) {
             $phone = $msg->contact?->phone ?? $msg->text;
@@ -293,11 +300,15 @@ class RegistrationFlow extends Flow
         $name = $this->state->get('name');
         $phone = $this->state->get('phone');
 
-        $step->ask("Имя: {$name}\nТелефон: {$phone}\n\nВсё верно?", function () {
-            return Keyboard::make()
-                ->button('Да', action: 'confirm')
-                ->button('Нет', action: 'cancel');
-        });
+        $step->ask(
+            "Имя: {$name}\nТелефон: {$phone}\n\nВсё верно?",
+            Keyboard::make()->buttons([
+                [
+                    Button::make('Да')->action('confirm'),
+                    Button::make('Нет')->action('cancel'),
+                ],
+            ]),
+        );
 
         $step->receive(function (IncomingMessage $msg) {
             if ($msg->action === 'confirm') {
