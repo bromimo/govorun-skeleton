@@ -33,17 +33,22 @@ URL вебхука: `https://example.com/webhook/telegram` — последни�
 
 ### Структура проекта
 
+В свежем скелетоне присутствует только `app/Controllers/` (+ `app/Support/` с composer-хуком). Остальные папки (`app/Flows/`, `app/Services/`, `app/Middleware/`, `app/Providers/`) создавайте по мере необходимости — CLI-генераторы (`make:flow`, `make:api-client`, …) положат файлы в соответствующие места автоматически.
+
 ```
-app/Controllers/        — контроллеры бота
-app/Flows/              — Flow-диалоги (цепочки шагов)
-app/Services/           — API-клиенты и сервисы
-config/                 — конфигурационные файлы
+app/Controllers/        — контроллеры бота (есть из коробки)
+app/Flows/              — Flow-диалоги (создаётся через make:flow)
+app/Services/           — API-клиенты (создаётся через make:api-client)
+app/Middleware/         — middleware (создаётся вручную)
+app/Providers/          — сервис-провайдеры (создаётся вручную)
+config/                 — app, messenger, database, cache, logging
 routes/messenger.php    — маршруты команд
 bootstrap/app.php       — точка создания Application
 public/index.php        — точка входа для вебхука
-govorun                 — CLI-утилита
+govorun                 — CLI-утилита (php govorun ...)
 storage/logs/           — логи приложения
 storage/state/          — состояния Flow-диалогов
+storage/app/            — пользовательские файлы (включая bot-profile.{jpg,mp4})
 ```
 
 ## Маршрутизация
@@ -121,21 +126,26 @@ class StartController extends Controller
 }
 ```
 
-### Доступные методы контроллера
+### Доступные свойства и методы контроллера
 
-| Метод | Описание |
-|-------|----------|
-| `$this->reply(string $text)` | Отправить текстовый ответ |
-| `$this->send(OutgoingMessage $message)` | Отправить сообщение с клавиатурой/медиа |
-| `$this->message()` | Получить `IncomingMessage` |
-| `$this->user()` | Получить `UserDto` |
-| `$this->param(string $key)` | Параметр callback-действия |
-| `$this->startFlow(string $flowClass)` | Запустить Flow-диалог |
+| Свойство / метод | Тип | Описание |
+|---|---|---|
+| `$this->message` | `IncomingMessage` | Входящее сообщение (свойство, не метод) |
+| `$this->driver` | `MessengerDriver` | Драйвер мессенджера |
+| `$this->state` | `StateAccessor` | `PersistentState` — write-through state, каждый `set()` сразу пишет в `StateStorage`. При отсутствии хранилища — пустая `StateData`. |
+| `$this->reply(string $text)` | `void` | Отправить текстовый ответ |
+| `$this->send(OutgoingMessage $message)` | `void` | Отправить сообщение с клавиатурой/медиа |
+| `$this->user()` | `UserDto` | Сокращение для `$this->message->user` |
+| `$this->param(string $key)` | `?string` | Параметр callback-действия (для `Route::action()`) |
+| `$this->startFlow(string $flowClass)` | `void` | Запустить Flow-диалог |
+| `$this->http()` | `HttpManager` | Через трейт `MakesHttpCalls` — доступ к подключениям из `config/connections.php`: `$this->http()->connection('slug')->get(...)`. |
+
+> **Auto-finalize inline-клавиатуры.** Когда контроллер отправляет через `send()` сообщение с inline-клавиатурой, имеющей action-кнопки, фреймворк сохраняет в storage контекст. На следующем Action-сообщении исходное сообщение редактируется: клавиатура убирается, к тексту дописывается `(выбрано: <label>)`. Дополнительно ничего делать не нужно.
 
 ### Входящее сообщение (IncomingMessage)
 
 ```php
-$msg = $this->message();
+$msg = $this->message;
 
 $msg->id;           // ID сообщения
 $msg->chatId;       // ID чата
@@ -207,10 +217,13 @@ $this->send($msg);
 ```php
 $msg = Message::make('Поделитесь контактом:')
     ->keyboard(
-        Keyboard::reply()->buttons([
-            [Button::make('Отправить контакт')->requestContact()],
-            [Button::make('Отправить локацию')->requestLocation()],
-        ])
+        Keyboard::reply()
+            ->resize()   // подогнать высоту под содержимое
+            ->oneTime()  // скрыть после нажатия
+            ->buttons([
+                [Button::make('Отправить контакт')->requestContact()],
+                [Button::make('Отправить локацию')->requestLocation()],
+            ])
     );
 
 $this->send($msg);
@@ -230,14 +243,18 @@ $this->send($msg);
 ```php
 use Govorun\Messaging\Media;
 
-// Фото
 $this->send(Media::photo('https://example.com/image.jpg')->caption('Описание'));
-
-// Документ
 $this->send(Media::document('https://example.com/file.pdf'));
+$this->send(Media::video('https://example.com/clip.mp4'));
+$this->send(Media::audio('https://example.com/track.mp3'));
+$this->send(Media::voice('https://example.com/voice.ogg'));
+$this->send(Media::animation('https://example.com/anim.gif'));
+```
 
-// Голосовое сообщение
-$this->send(Media::voice('https://example.com/audio.ogg'));
+**Локальный файл.** Telegram-драйвер умеет отправлять локальные файлы через multipart-upload — если в URL передать существующий локальный путь, фреймворк сам отправит файл, а не URL:
+
+```php
+$this->send(Media::photo('/var/www/storage/uploads/cat.jpg'));
 ```
 
 ## Flow-диалоги
@@ -259,6 +276,7 @@ namespace App\Flows;
 
 use Govorun\State\Flow;
 use Govorun\State\Step;
+use Govorun\Messaging\Button;
 use Govorun\Messaging\Keyboard;
 use Govorun\Messaging\IncomingMessage;
 
@@ -269,11 +287,20 @@ class RegistrationFlow extends Flow
     // Команды, которые прерывают flow
     protected array $interruptCommands = ['/start', '/cancel'];
 
+    // Прерывать flow при получении события (по умолчанию true)
+    protected bool $interruptOnEvent = true;
+
     public function nameStep(Step $step): void
     {
         $step->ask('Как вас зовут?');
 
         $step->receive(function (IncomingMessage $msg) {
+            // Шорткат-валидатор: ошибка автоматически летит пользователю,
+            // если fails() — текущий шаг не двигаем, ждём корректный ответ.
+            if ($this->validator($msg->text)->required()->fails()) {
+                return;
+            }
+
             $this->state->set('name', $msg->text);
             $this->nextStep();
         });
@@ -283,7 +310,7 @@ class RegistrationFlow extends Flow
     {
         $step->ask(
             'Ваш номер телефона?',
-            Keyboard::reply()->buttons([
+            Keyboard::reply()->resize()->oneTime()->buttons([
                 [Button::make('Отправить контакт')->requestContact()],
             ]),
         );
@@ -314,10 +341,14 @@ class RegistrationFlow extends Flow
             if ($msg->action === 'confirm') {
                 $this->reply('Регистрация завершена!');
             } else {
-                $this->reply('Регистрация отменена.');
+                // Прыжок на конкретный шаг — должен быть в $steps.
+                // Без аргумента nextStep() переходит к следующему по порядку
+                // или завершает flow, если шаг последний.
+                $this->nextStep('name');
+                return;
             }
-            // nextStep() обязателен — завершает flow и очищает состояние
-            $this->nextStep();
+
+            $this->nextStep(); // на последнем шаге — финализирует и чистит state
         });
     }
 
@@ -332,6 +363,16 @@ class RegistrationFlow extends Flow
     }
 }
 ```
+
+### Прерывание flow
+
+`shouldInterrupt(IncomingMessage)` возвращает true в трёх случаях:
+
+1. Активна inline-клавиатура `ask` (есть `__ask_keyboard_ctx` в state) и пришёл **текст** — пользователь не нажал кнопку, а написал что-то ещё. События в этом режиме flow не прерывают.
+2. `$interruptOnEvent === true` и пришло событие.
+3. Текст совпадает с одной из `$interruptCommands` (или начинается на `<cmd> `).
+
+При прерывании вызывается `onCancel()`, состояние очищается, исходное `ask`-сообщение (если была inline-клавиатура) редактируется — клавиатура убирается, дописывается `(отменено)`.
 
 ### Запуск Flow из контроллера
 
@@ -384,9 +425,43 @@ class AuthMiddleware implements Middleware
 }
 ```
 
-## API-клиенты
+## HTTP-подключения (рекомендуемый путь)
 
-Для работы с внешними API:
+Конфигурация — `config/connections.php`. Каждый ключ массива — slug. Поддерживаемые типы auth: `none`, `bearer`, `api_key` (header или query), `basic`.
+
+```php
+// config/connections.php
+return [
+    'payment' => [
+        'base_url' => 'https://api.payment.com/v1',
+        'default_headers' => ['Accept' => 'application/json'],
+        'auth' => [
+            'type' => 'bearer',
+            'token' => env('PAYMENT_TOKEN', ''),
+        ],
+    ],
+];
+```
+
+Использование через трейт `MakesHttpCalls`, который подмешан в `Controller` и `Flow`:
+
+```php
+$response = $this->http()->connection('payment')->post('/charge', [
+    'json' => ['amount' => 100, 'currency' => 'RUB'],
+]);
+
+if ($response->successful()) {
+    $data = $response->json();
+}
+```
+
+`HttpResponse` — `status(): int`, `successful(): bool`, `failed(): bool`, `body(): string`, `json(): ?array`. Таймаут 10 секунд, `http_errors=false` (исключений на 4xx/5xx не бросает).
+
+Опции Guzzle (`json`, `form_params`, `query`, `headers`, …) пробрасываются через второй аргумент метода.
+
+## API-клиенты (альтернатива)
+
+Если удобнее иметь типизированный клиент-наследник, а не вызывать `connection('slug')`:
 
 ```bash
 php govorun make:api-client WeatherClient
@@ -420,6 +495,35 @@ class WeatherClient extends ApiClient
     }
 }
 ```
+
+## Валидация ввода
+
+`Govorun\Support\Validator` — fluent-валидатор с дефолтными текстами ошибок (`resources/validation-messages.json` во фреймворке).
+
+```php
+use Govorun\Support\Validator;
+
+$error = Validator::make($msg->text)
+    ->required()
+    ->numeric()
+    ->min(1)
+    ->max(999)
+    ->validate();   // null если ок
+
+if ($error !== null) {
+    $this->reply($error);
+}
+```
+
+Во `Flow` есть шорткат `$this->validator($value)` — он сам отправит ошибку пользователю через `errorHandler`. Терминал `fails(): bool` возвращает true, если ошибка была отправлена:
+
+```php
+if ($this->validator($msg->text)->required()->email()->fails()) {
+    return; // остаёмся на том же шаге, ошибка уже у пользователя
+}
+```
+
+Доступные правила: `required`, `email`, `string`, `numeric`, `integer`, `url`, `phone`, `regex`, `min`, `max`, `between`, `in`, `date`.
 
 ## Сервис-провайдеры
 
@@ -462,11 +566,12 @@ class AppServiceProvider extends ServiceProvider
 |---------|----------|
 | `php govorun webhook:install` | Установить вебхук |
 | `php govorun webhook:remove` | Удалить вебхук |
-| `php govorun migrate` | Запустить миграции БД |
+| `php govorun migrate` | Запустить миграции БД (создаёт таблицу `govorun_states` при `STATE_DRIVER=database`) |
 | `php govorun make:controller {name}` | Создать контроллер |
 | `php govorun make:flow {name}` | Создать Flow-диалог |
 | `php govorun make:api-client {name}` | Создать API-клиент |
 | `php govorun state:clear` | Очистить состояния Flow |
+| `php govorun bot:profile-sync` | Идемпотентно запушить в Telegram Bot API имя/описания/команды из `config/bot_profile.php` и фото из `storage/app/bot-profile.{jpg,mp4}`. Флаги `--only=<section>...` / `--skip=<section>...` для частичной синхронизации (секции: `name`, `short_description`, `description`, `commands`, `photo`). |
 | `php govorun test` | Запустить тесты |
 
 ## Конфигурация
@@ -493,6 +598,23 @@ class AppServiceProvider extends ServiceProvider
 ```
 
 `secret` — опционально. Если задан, Telegram будет присылать заголовок `X-Telegram-Bot-Api-Secret-Token` для верификации вебхука.
+
+### config/state.php
+
+```php
+'driver' => env('STATE_DRIVER', 'file'),  // file | database | cache
+'ttl' => (int) env('STATE_TTL', 3600),    // для cache-драйвера
+```
+
+Для `database` — выполнить `php govorun migrate` (создаст таблицу `govorun_states`).
+
+### config/connections.php
+
+HTTP-подключения для `$this->http()->connection('slug')` (см. раздел [HTTP-подключения](#http-подключения-рекомендуемый-путь)). По умолчанию — пустой массив.
+
+### config/bot_profile.php
+
+Профиль Telegram для `bot:profile-sync` (имя, описания, команды). По умолчанию возвращает `null` — команда сообщит «Профиль не найден» и ничего не запушит. Раскомментируйте массив в файле, чтобы включить.
 
 ### config/database.php
 
