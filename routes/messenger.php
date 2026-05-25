@@ -1,7 +1,7 @@
 <?php
 
-use App\Controllers\StartController;
 use Govorun\Routing\Route;
+use App\Controllers\StartController;
 
 /**
     |--------------------------------------------------------------------------
