@@ -6,6 +6,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 $app = require __DIR__ . '/../bootstrap/app.php';
 
-$request = Request::capture();
+$response = $app->handleWebhook(Request::capture());
 
-$app->handleWebhook($request);
+http_response_code($response->status);
+echo $response->body;
